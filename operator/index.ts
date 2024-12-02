@@ -140,6 +140,17 @@ const processBatch = async (batchNumber: bigint) => {
   }
 
   if (balances) {
+    // Create a clean version of tasks without circular references
+    const cleanTasks = tasks.map(t => ({
+      zeroForOne: t.zeroForOne,
+      amountSpecified: t.amountSpecified,
+      sqrtPriceLimitX96: t.sqrtPriceLimitX96,
+      sender: t.sender,
+      poolId: t.poolId,
+      taskCreatedBlock: t.taskCreatedBlock,
+      taskId: t.taskId
+    }));
+
     const messageHash = await serviceManager.read.getMessageHash([
       tasks[0].poolId,
       balances.transferBalances,
@@ -150,7 +161,7 @@ const processBatch = async (batchNumber: bigint) => {
     });
     console.log("Signature", signature);
     const txHash = await serviceManager.write.respondToBatch([
-      tasks,
+      cleanTasks,
       referenceTaskIndices,
       balances.transferBalances,
       balances.swapBalances,
