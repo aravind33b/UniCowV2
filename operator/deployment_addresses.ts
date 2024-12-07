@@ -29,7 +29,7 @@ export const deploymentAddresses = {
     "stakeRegistryProxy": "0x9E545E3C0baAB3E08CdfD552C960A1050f373042"
   },
   "hook": {
-    "hook": "0x13cfE3a2Bd4F8Dd73d2D741e6831fA68D8779088",
+    "hook": "0x3A011c647385343199cFe55d8D601722D0529088",
     "lpRouter": "0x70e0bA845a1A0F2DA3359C97E0285013525FFC49",
     "poolManager": "0x998abeb3E57409262aE5b751f60747921B33613E",
     "quoter": "0x99bbA657f2BbC93c02D617f8bA121cB8Fc104Acf",

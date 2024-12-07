@@ -7,9 +7,22 @@ import {
   publicClient,
   registryContract,
   avsDirectory,
+  serviceManager,
 } from "./utils";
 
 export async function registerOperator() {
+  // Check minimum weight requirement
+  const minWeight = await registryContract.read.minimumWeight();
+  console.log("Minimum weight required:", minWeight);
+
+  // Check operator's current weight
+  const operatorWeight = await registryContract.read.getOperatorWeight([account.address]);
+  console.log("Operator current weight:", operatorWeight);
+
+  // Check if operator meets minimum weight
+  const hasMinWeight = await serviceManager.read.operatorHasMinimumWeight([account.address]);
+  console.log("Operator has minimum weight:", hasMinWeight);
+
   const isOperator = await delegationManager.read.isOperator([account.address]);
   if (!isOperator) {
     // register as operator

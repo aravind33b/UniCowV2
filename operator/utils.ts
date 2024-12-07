@@ -6,6 +6,8 @@ import {
   createWalletClient,
   getContract,
   http,
+  keccak256,
+  encodePacked,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { anvil, holesky } from "viem/chains";
@@ -19,55 +21,48 @@ import { deploymentAddresses } from "./deployment_addresses";
 import { PoolManagerABI } from "./abis/PoolManager";
 import bigDecimal from "js-big-decimal";
 
+export type PoolPriceInfo = {
+  poolKey: PoolKey;
+  spotPrice: number;
+  liquidity: bigint;
+};
+
 export type Task = {
+  // Existing fields
   zeroForOne: boolean;
   amountSpecified: bigint;
   sqrtPriceLimitX96: bigint;
   sender: `0x${string}`;
-  poolId: `0x${string}`;
-  poolKey: PoolKey;
+  poolId: `0x${string}`;  // This becomes the preferred pool's ID
+  poolKey: PoolKey;       // This becomes the preferred pool's key
   taskCreatedBlock: number;
   taskId: number;
-
   poolOutputAmount: bigint | null;
   poolInputAmount: bigint | null;
+  extraData: `0x${string}`;  // Hook data
+
+  // New fields
+  acceptedPools: PoolKey[];     // List of pools this task can trade in
+  poolPrices?: PoolPriceInfo[]; // Price info for each pool (optional, filled by operator)
 };
 
 export enum Feasibility {
-  NONE = "Token0 output > available token 0, token1 output > available token 1",
-  IDEAL = "Ideal for everyone involved",
-  IDEAL_ZERO_FOR_ONE = "Ideal for zeroForOne, Feasible for oneForZero",
-  IDEAL_ONE_FOR_ZERO = "Ideal for oneForZero, Feasible for zeroForOne",
-  SWAP_EACH_TASK = "Feasible to swap using the pool",
+  NONE = "NONE",
+  AMM = "AMM",
+  CIRCULAR = "CIRCULAR"
 }
 
 export type PossibleResult = {
   matchings: Matching[];
-  poolSpotPrice: number;
-
-  poolAveragePrice: bigDecimal;
-  totalPoolToken0Input: bigint;
-  totalPoolToken1Input: bigint;
-  totalPoolToken0Output: bigint;
-  totalPoolToken1Output: bigint;
-
-  matchingAveragePrice: bigDecimal;
-  totalToken0Input: bigint;
-  totalToken1Input: bigint;
-  totalToken0Output: bigint;
-  totalToken1Output: bigint;
-
   feasible: boolean;
+  transferBalances: TransferBalance[];
+  swapBalances: SwapBalance[];
 };
 
 export type Matching = {
   tasks: Task[];
   feasibility: Feasibility;
-
-  totalToken0Input: bigint;
-  totalToken1Input: bigint;
-  totalToken0Output: bigint;
-  totalToken1Output: bigint;
+  isCircular?: boolean;
 };
 
 export type PoolKey = {
@@ -136,3 +131,107 @@ export const poolManager = getContract({
   abi: PoolManagerABI,
   client: { public: publicClient, wallet: walletClient },
 });
+
+// Helper to calculate pool ID from key (pure function, matches Solidity implementation)
+export function calculatePoolId(key: PoolKey): `0x${string}` {
+  return keccak256(
+    encodePacked(
+      ["address", "address", "uint24", "int24", "address"],
+      [key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]
+    )
+  );
+}
+
+// Helper to get slot0 data using extsload
+export async function getSlot0Data(poolManager: any, poolId: `0x${string}`): Promise<[bigint, number]> {
+  // Calculate the slot for Pool.State (matches Solidity implementation)
+  const stateSlot = keccak256(encodePacked(["bytes32", "uint256"], [poolId, BigInt(0)]));
+  
+  // Read the slot data
+  const data = await poolManager.read.extsload([stateSlot]);
+  
+  // Decode the data (matches Solidity StateLibrary implementation)
+  const sqrtPriceX96 = BigInt(data) >> BigInt(96);
+  const tick = Number((BigInt(data) >> BigInt(160)) & ((BigInt(1) << BigInt(24)) - BigInt(1)));
+  
+  return [sqrtPriceX96, tick];
+}
+
+// Helper to get liquidity using extsload
+export async function getPoolLiquidity(poolManager: any, poolId: `0x${string}`): Promise<bigint> {
+  // Calculate the slot for Pool.State (matches Solidity implementation)
+  const stateSlot = keccak256(encodePacked(["bytes32", "uint256"], [poolId, BigInt(0)]));
+  
+  // Calculate liquidity slot with offset (matches Solidity StateLibrary implementation)
+  const LIQUIDITY_OFFSET = BigInt(4);
+  const liquiditySlot = BigInt(stateSlot) + LIQUIDITY_OFFSET;
+  
+  // Convert liquiditySlot to hex string with 0x prefix
+  const liquiditySlotHex = `0x${liquiditySlot.toString(16).padStart(64, '0')}` as `0x${string}`;
+  
+  // Read the slot data
+  const data = await poolManager.read.extsload([liquiditySlotHex]);
+  
+  // Decode the data (matches Solidity StateLibrary implementation)
+  return BigInt(data);
+}
+
+export type TransferBalance = {
+  amount: bigint;
+  currency: `0x${string}`;
+  sender: `0x${string}`;
+};
+
+export type SwapBalance = {
+  amountSpecified: bigint;
+  zeroForOne: boolean;
+  sqrtPriceLimitX96: bigint;
+};
+
+// Helper to encode pool keys into bytes
+export function encodePoolKeys(pools: PoolKey[]): Uint8Array {
+  // Convert pool data to bytes
+  const bytes = new Uint8Array(pools.length * 108); // 20 + 20 + 4 + 4 + 20 bytes per pool
+  let offset = 0;
+
+  pools.forEach(pool => {
+    // Convert addresses to bytes (20 bytes each)
+    const currency0Bytes = hexToBytes(pool.currency0.slice(2));
+    const currency1Bytes = hexToBytes(pool.currency1.slice(2));
+    const hooksBytes = hexToBytes(pool.hooks.slice(2));
+    
+    // Convert numbers to bytes (4 bytes each)
+    const feeBytes = numberToBytes(pool.fee);
+    const tickSpacingBytes = numberToBytes(pool.tickSpacing);
+    
+    // Copy all bytes into the result array
+    bytes.set(currency0Bytes, offset);
+    bytes.set(currency1Bytes, offset + 20);
+    bytes.set(feeBytes, offset + 40);
+    bytes.set(tickSpacingBytes, offset + 44);
+    bytes.set(hooksBytes, offset + 48);
+    
+    offset += 68;
+  });
+
+  return bytes;
+}
+
+// Helper to convert hex string to bytes
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+  }
+  return bytes;
+}
+
+// Helper to convert number to bytes
+function numberToBytes(num: number): Uint8Array {
+  const bytes = new Uint8Array(4);
+  bytes[0] = (num >> 24) & 0xFF;
+  bytes[1] = (num >> 16) & 0xFF;
+  bytes[2] = (num >> 8) & 0xFF;
+  bytes[3] = num & 0xFF;
+  return bytes;
+}
