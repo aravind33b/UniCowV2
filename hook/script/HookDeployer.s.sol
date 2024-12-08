@@ -20,6 +20,8 @@ import "forge-std/console.sol";
 import "forge-std/StdCheats.sol";
 
 contract HookDeployer is Script, StdCheats {
+    using CurrencyLibrary for Currency;
+
     IPoolManager manager;
     PoolModifyLiquidityTest lpRouter;
     PoolSwapTest swapRouter;
@@ -27,9 +29,12 @@ contract HookDeployer is Script, StdCheats {
 
     Currency token0;
     Currency token1;
+    Currency token2;
 
     UniCowHook hook;
     uint160 constant SQRT_PRICE_1_4 = 158456325028528675187087900672;
+    uint160 constant SQRT_PRICE_1_80 = 707906546557329983810457536050;    // 1:80 ratio
+    uint160 constant SQRT_PRICE_1_25 = 395742478843881893883567226157;    // 1:25 ratio
 
     function run(address serviceManager) external {
         vm.createSelectFork("http://localhost:8545");
@@ -42,6 +47,7 @@ contract HookDeployer is Script, StdCheats {
         deployHookToAnvil(serviceManager);
 
         initPoolAndAddLiquidity();
+        initToken2PoolsAndAddLiquidity();
         vm.stopBroadcast();
 
         // WRITE JSON DATA
@@ -68,6 +74,11 @@ contract HookDeployer is Script, StdCheats {
             deployed_addresses,
             "token1",
             Currency.unwrap(token1)
+        );
+        vm.serializeAddress(
+            deployed_addresses,
+            "token2",
+            Currency.unwrap(token2)
         );
         string memory deployed_addresses_output = vm.serializeAddress(
             deployed_addresses,
@@ -104,6 +115,7 @@ contract HookDeployer is Script, StdCheats {
     function deployMintAndApprove2Currencies() internal {
         MockERC20 tokenA = new MockERC20("MockA", "A", 18);
         MockERC20 tokenB = new MockERC20("MockB", "B", 18);
+        MockERC20 tokenC = new MockERC20("Token2", "TK2", 18);
         if (uint160(address(tokenA)) < uint160(address(tokenB))) {
             token0 = Currency.wrap(address(tokenA));
             token1 = Currency.wrap(address(tokenB));
@@ -111,14 +123,18 @@ contract HookDeployer is Script, StdCheats {
             token0 = Currency.wrap(address(tokenB));
             token1 = Currency.wrap(address(tokenA));
         }
+        token2 = Currency.wrap(address(tokenC));
 
         tokenA.mint(msg.sender, 100_000 ether);
         tokenB.mint(msg.sender, 100_000 ether);
+        tokenC.mint(msg.sender, 100_000 ether);
 
         tokenA.approve(address(lpRouter), type(uint256).max);
         tokenB.approve(address(lpRouter), type(uint256).max);
+        tokenC.approve(address(lpRouter), type(uint256).max);
         tokenA.approve(address(swapRouter), type(uint256).max);
         tokenB.approve(address(swapRouter), type(uint256).max);
+        tokenC.approve(address(swapRouter), type(uint256).max);
     }
 
     function deployHookToAnvil(address serviceManager) internal {
@@ -172,6 +188,50 @@ contract HookDeployer is Script, StdCheats {
             PoolSwapTest.TestSettings({
                 takeClaims: false,
                 settleUsingBurn: false
+            }),
+            new bytes(0)
+        );
+    }
+
+    function initToken2PoolsAndAddLiquidity() internal {
+        // Initialize token2-token1 pool (ensuring correct order)
+        PoolKey memory poolKey1 = PoolKey({
+            currency0: uint160(Currency.unwrap(token2)) < uint160(Currency.unwrap(token1)) ? token2 : token1,
+            currency1: uint160(Currency.unwrap(token2)) < uint160(Currency.unwrap(token1)) ? token1 : token2,
+            fee: 3000,
+            tickSpacing: 120,
+            hooks: hook
+        });
+        manager.initialize(poolKey1, SQRT_PRICE_1_80, new bytes(0));
+
+        lpRouter.modifyLiquidity(
+            poolKey1,
+            IPoolManager.ModifyLiquidityParams({
+                tickLower: TickMath.minUsableTick(120),
+                tickUpper: TickMath.maxUsableTick(120),
+                liquidityDelta: 2000 ether,
+                salt: bytes32(0)
+            }),
+            new bytes(0)
+        );
+
+        // Initialize token2-token0 pool (ensuring correct order)
+        PoolKey memory poolKey2 = PoolKey({
+            currency0: uint160(Currency.unwrap(token2)) < uint160(Currency.unwrap(token0)) ? token2 : token0,
+            currency1: uint160(Currency.unwrap(token2)) < uint160(Currency.unwrap(token0)) ? token0 : token2,
+            fee: 3000,
+            tickSpacing: 120,
+            hooks: hook
+        });
+        manager.initialize(poolKey2, SQRT_PRICE_1_25, new bytes(0));
+
+        lpRouter.modifyLiquidity(
+            poolKey2,
+            IPoolManager.ModifyLiquidityParams({
+                tickLower: TickMath.minUsableTick(120),
+                tickUpper: TickMath.maxUsableTick(120),
+                liquidityDelta: 2000 ether,
+                salt: bytes32(0)
             }),
             new bytes(0)
         );

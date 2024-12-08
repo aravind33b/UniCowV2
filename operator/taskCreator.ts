@@ -19,21 +19,27 @@ dotenv.config();
 
 // Add pool configurations
 const POOL_CONFIGS = {
-  defaultPool: {
+  pool01: {
     currency0: deploymentAddresses.hook.token0,
     currency1: deploymentAddresses.hook.token1,
     fee: 3000,
     tickSpacing: 120,
     hooks: deploymentAddresses.hook.hook,
-  } as const,
-  // For demo, using same tokens but different fee tier
-  alternatePool: {
-    currency0: deploymentAddresses.hook.token0,
-    currency1: deploymentAddresses.hook.token1,
-    fee: 500,  // Different fee tier
+  },
+  pool12: {
+    currency0: deploymentAddresses.hook.token1,
+    currency1: deploymentAddresses.hook.token2,
+    fee: 3000,
     tickSpacing: 120,
     hooks: deploymentAddresses.hook.hook,
-  } as const,
+  },
+  pool02: {
+    currency0: deploymentAddresses.hook.token0,
+    currency1: deploymentAddresses.hook.token2,
+    fee: 3000,
+    tickSpacing: 120,
+    hooks: deploymentAddresses.hook.hook,
+  },
 } as const;
 
 type PoolConfig = typeof POOL_CONFIGS[keyof typeof POOL_CONFIGS];
@@ -66,12 +72,12 @@ const TEST_SCENARIOS = {
   cowMatch: [
     {
       zeroForOne: true,
-      amountSpecified: -parseEther("10"), // Sell 10 token0 for token1
+      amountSpecified: -parseEther("1"), // Sell 1 token0 for token1
       sqrtPriceLimitX96: BigInt("152398000000000000000000000000"),
     },
     {
       zeroForOne: false,
-      amountSpecified: -parseEther("40"), // Sell 40 token1 for token0
+      amountSpecified: -parseEther("1"), // Sell 1 token1 for token0
       sqrtPriceLimitX96: BigInt("162369000000000000000000000000"),
     }
   ],
@@ -80,67 +86,37 @@ const TEST_SCENARIOS = {
   circularCow: [
     {
       zeroForOne: true,
-      amountSpecified: -parseEther("10"), // A sells 10 token0
+      amountSpecified: -parseEther("1"),
+      sqrtPriceLimitX96: BigInt("152398000000000000000000000000"),
+    },
+    {
+      zeroForOne: true,
+      amountSpecified: -parseEther("1"),
       sqrtPriceLimitX96: BigInt("152398000000000000000000000000"),
     },
     {
       zeroForOne: false,
-      amountSpecified: -parseEther("40"), // B sells 40 token1
-      sqrtPriceLimitX96: BigInt("162369000000000000000000000000"),
-    },
-    {
-      zeroForOne: true,
-      amountSpecified: -parseEther("10"), // C sells 10 token0
+      amountSpecified: -parseEther("1"),
       sqrtPriceLimitX96: BigInt("152398000000000000000000000000"),
     }
   ],
-
-  // Scenario 3: AMM Fallback (tasks that can't be matched)
-  ammFallback: [
-    {
-      zeroForOne: true,
-      amountSpecified: -parseEther("10"), // Both selling token0
-      sqrtPriceLimitX96: BigInt("152398000000000000000000000000"),
-    },
-    {
-      zeroForOne: true,
-      amountSpecified: -parseEther("10"), // Both selling token0
-      sqrtPriceLimitX96: BigInt("152398000000000000000000000000"),
-    }
-  ],
-
-  // Scenario 4: Mixed (some CoW, some AMM)
-  mixed: [
-    {
-      zeroForOne: true,
-      amountSpecified: -parseEther("10"), // Can match with task 2
-      sqrtPriceLimitX96: BigInt("152398000000000000000000000000"),
-    },
-    {
-      zeroForOne: false,
-      amountSpecified: -parseEther("40"), // Can match with task 1
-      sqrtPriceLimitX96: BigInt("162369000000000000000000000000"),
-    },
-    {
-      zeroForOne: true,
-      amountSpecified: -parseEther("10"), // No match, goes to AMM
-      sqrtPriceLimitX96: BigInt("152398000000000000000000000000"),
-    }
-  ]
-};
+} as const;
 
 async function createTask(numTasks: number, scenario: keyof typeof TEST_SCENARIOS = "cowMatch") {
   console.log(`Creating ${numTasks} tasks for scenario: ${scenario}`);
   
   const swapParams = TEST_SCENARIOS[scenario];
-  const pools = [POOL_CONFIGS.defaultPool];
+  const pools = [POOL_CONFIGS.pool01, POOL_CONFIGS.pool12, POOL_CONFIGS.pool02];
 
   // Create each task in sequence
   for (let i = 0; i < numTasks && i < swapParams.length; i++) {
-    console.log(`Creating task ${i + 1} (${swapParams[i].zeroForOne ? 'Selling token0' : 'Selling token1'})`);
+    console.log(`Creating task ${i + 1}`);
+    
+    const poolConfigs = [POOL_CONFIGS.pool01, POOL_CONFIGS.pool12, POOL_CONFIGS.pool02];
+    const pool = poolConfigs[i];
     
     const txHash = await swapRouter.write.swap([
-      POOL_CONFIGS.defaultPool,
+      pool,
       swapParams[i],
       {
         takeClaims: false,
