@@ -145,7 +145,7 @@ const processBatch = async (batchNumber: bigint) => {
     const cowMatchingGroups: MatchGroup[] = [];
     const matchedTasks = new Set<number>();
 
-    // First try to find one circular match using first 3 tasks
+    // First check for circular matches (3 tasks)
     for (let i = 0; i < Math.min(3, tasks.length); i++) {
       for (let j = i + 1; j < Math.min(3, tasks.length); j++) {
         for (let k = j + 1; k < Math.min(3, tasks.length); k++) {
@@ -177,15 +177,22 @@ const processBatch = async (batchNumber: bigint) => {
       }
     }
 
-    // Then check for one direct match using tasks 3 and 4
-    if (tasks.length >= 5) {
-      const i = 3;
-      const j = 4;
-      if (!matchedTasks.has(i) && !matchedTasks.has(j)) {
-        if (tasks[i].zeroForOne !== tasks[j].zeroForOne && tasks[i].poolId === tasks[j].poolId) {
+    // Then check for direct matches among remaining tasks
+    for (let i = 0; i < tasks.length; i++) {
+      if (matchedTasks.has(i)) continue;
+      
+      for (let j = i + 1; j < tasks.length; j++) {
+        if (matchedTasks.has(j)) continue;
+
+        const taskA = tasks[i];
+        const taskB = tasks[j];
+        
+        // Check if tasks are for the same pool and in opposite directions
+        if (taskA.poolId === taskB.poolId && taskA.zeroForOne !== taskB.zeroForOne) {
           cowMatchingGroups.push([i, j]);
           matchedTasks.add(i);
           matchedTasks.add(j);
+          break;
         }
       }
     }
@@ -261,13 +268,7 @@ const processBatch = async (batchNumber: bigint) => {
       });
     }
 
-    console.log("\nBalances {");
-    console.log("  transferBalances: [");
-    for (const balance of result.transferBalances) {
-      console.log(`    {amount: ${balance.amount}, currency: "${balance.currency}"}`);
-    }
-    console.log("  ]");
-    console.log("}");
+    console.log(); // Add empty line for spacing
 
     // Get message hash and sign
     const messageHash = await serviceManager.read.getMessageHash([

@@ -54,6 +54,27 @@ If they go through the pool, Alice will get ~2995 USDC, Bob will get ~0.65 ETH, 
 
 Instead, Alice's trade can be matched against Bob, Charlie, and Darcy's trades - enabling all of them to get a better price than the AMM.
 
+### Example 3: Circular CoW
+A more complex case of CoW occurs when three or more trades form a circular path.
+
+For example, with three pools ETH/USDC, USDC/DAI, and DAI/ETH:
+- Alice wants to sell 1 ETH for USDC
+- Bob wants to sell 3000 USDC for DAI
+- Charlie wants to sell 3000 DAI for ETH
+
+Three tasks in a batch:
+1. Sell 1 Token A for Token B
+2. Sell 80 Token B for Token C
+3. Sell 25 Token C for Token A
+
+The operator finds this circular match where each trader gets better prices than AMM:
+1. Task 1 receives 80 Token B for 1 Token A
+2. Task 2 receives 25 Token C for 80 Token B
+3. Task 3 receives 1 Token A for 25 Token C
+
+Instead of going through AMM pools where each would lose to fees and slippage, 
+they can be matched in a circle, each getting better prices than the AMM.
+
 ## Technical Architecture
 
 There are a few key components to the UniCow system:
@@ -117,6 +138,27 @@ A combination is then considered `FEASIBLE` if and only if:
 4. The `FEASIBLE` combinations give us a Pareto Efficient Set. From here, we find the `BEST` combination by maximizing the total output amount of tokens from all the `FEASIBLE` combinations.
 
 5. Finally, the operator triggers an onchain transaction to carry out the result of the `BEST` combination.
+
+Updates in V2:
+
+### Optimization Algorithm
+The v2 algorithm now supports:
+- Mixed matching: Can process batches containing a mix of:
+  - Circular CoW matches (3+ tasks in a circle)
+  - Direct CoW matches (2 tasks)
+  - AMM swaps (single tasks)
+- Multi-pool routing: Can match tasks across multiple pools to enable circular trades
+
+### Pool Setup (Example we have used)
+The system supports multiple interconnected pools:
+- Primary pool (token0/token1)
+- Secondary pool (token1/token2) 
+- Tertiary pool (token2/token0)
+
+Each pool uses:
+- Fee: 3000 (0.3%)
+- Tick spacing: 60
+- Similar liquidity amounts
 
 ---
 
