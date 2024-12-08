@@ -111,17 +111,12 @@ contract UniCowServiceManager is ECDSAServiceManagerBase, Pausable {
             "Operator does not meet minimum weight"
         );
 
+        // Verify tasks exist and haven't been responded to
         for (uint256 i = 0; i < referenceTaskIndices.length; i++) {
             require(
                 keccak256(abi.encode(tasks[i])) ==
                     allTaskHashes[referenceTaskIndices[i]],
                 "Task not found"
-            );
-
-            //  check the poolId is the same
-            require(
-                tasks[i].poolId == tasks[0].poolId,
-                "PoolId does not match"
             );
 
             require(
@@ -130,21 +125,26 @@ contract UniCowServiceManager is ECDSAServiceManagerBase, Pausable {
             );
         }
 
-        bytes32 messageHash = keccak256(
-            abi.encode(tasks[0].poolId, transferBalances, swapBalances)
+        // Verify signature
+        bytes32 messageHash = getMessageHash(
+            tasks[0].poolId,
+            transferBalances,
+            swapBalances
         );
-
         address signer = ECDSAUpgradeable.recover(messageHash, signature);
-
         require(signer == msg.sender, "Invalid signature");
 
+        // Store responses
         for (uint256 i = 0; i < referenceTaskIndices.length; i++) {
             allTaskResponses[referenceTaskIndices[i]] = signature;
         }
 
-        // call the hook contract to settle balances
+        // For circular matches (3 tasks), use first task's poolId to maintain token flow
+        bytes32 poolIdToUse = tasks[0].poolId;
+        
+        // Settle all balances in one call
         IUniCowHook(hook).settleBalances(
-            tasks[0].poolId,
+            poolIdToUse,
             transferBalances,
             swapBalances
         );

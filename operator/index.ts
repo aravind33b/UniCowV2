@@ -9,12 +9,36 @@ import {
   publicClient,
   quoterContract,
   serviceManager,
+  walletClient,
 } from "./utils";
 import { Mathb } from "./math";
 
 let latestBatchNumber: bigint = BigInt(0);
 const MAX_BLOCKS_PER_BATCH = 10;
 const batches: Record<string, Task[]> = {};
+
+interface TransferBalance {
+  amount: bigint;
+  currency: `0x${string}`;
+  sender: `0x${string}`;
+}
+
+interface SwapBalance {
+  amountSpecified: bigint;
+  zeroForOne: boolean;
+  sqrtPriceLimitX96: bigint;
+}
+
+interface Result {
+  matchings: {
+    tasks: Task[];
+    feasibility: "CIRCULAR" | "AMM";
+    isCircular: boolean;
+  }[];
+  feasible: boolean;
+  transferBalances: TransferBalance[];
+  swapBalances: SwapBalance[];
+}
 
 const startMonitoring = async () => {
   const unwatchTasks = serviceManager.watchEvent.NewTaskCreated(
@@ -127,46 +151,45 @@ const processBatch = async (batchNumber: bigint) => {
     const cowMatchingGroups: MatchGroup[] = [];
     
     // First check for circular matches (3 tasks)
-    // A->B->C->A pattern
-    for (let i = 0; i < tasks.length; i++) {
-      for (let j = i + 1; j < tasks.length; j++) {
-        for (let k = j + 1; k < tasks.length; k++) {
-          const taskA = tasks[i];
-          const taskB = tasks[j];
-          const taskC = tasks[k];
-          
-          // Check if we have A->B->C->A circular pattern
-          if (
-            // A sells to B
-            taskA.zeroForOne !== taskB.zeroForOne &&
-            taskA.poolId === taskB.poolId &&
-            // B sells to C
-            taskB.zeroForOne !== taskC.zeroForOne &&
-            taskB.poolId === taskC.poolId &&
-            // C sells to A (completing the circle)
-            taskC.zeroForOne !== taskA.zeroForOne &&
-            taskC.poolId === taskA.poolId
-          ) {
-            cowMatchingGroups.push([i, j, k]);
-            // Once we find a circular match, don't look for direct matches for these tasks
-            continue;
-          }
-        }
+for (let i = 0; i < tasks.length; i++) {
+  for (let j = i + 1; j < tasks.length; j++) {
+    for (let k = j + 1; k < tasks.length; k++) {
+      const taskA = tasks[i];
+      const taskB = tasks[j];
+      const taskC = tasks[k];
+      
+      // Get output and input tokens for each task
+      const taskAOutput = taskA.zeroForOne ? taskA.poolKey.currency1 : taskA.poolKey.currency0;
+      const taskBInput = taskB.zeroForOne ? taskB.poolKey.currency0 : taskB.poolKey.currency1;
+      const taskBOutput = taskB.zeroForOne ? taskB.poolKey.currency1 : taskB.poolKey.currency0;
+      const taskCInput = taskC.zeroForOne ? taskC.poolKey.currency0 : taskC.poolKey.currency1;
+      const taskCOutput = taskC.zeroForOne ? taskC.poolKey.currency1 : taskC.poolKey.currency0;
+      const taskAInput = taskA.zeroForOne ? taskA.poolKey.currency0 : taskA.poolKey.currency1;
+
+      if (
+        taskAOutput === taskBInput &&
+        taskBOutput === taskCInput &&
+        taskCOutput === taskAInput
+      ) {
+        cowMatchingGroups.push([i, j, k]);
+        continue;
       }
     }
+  }
+}
 
     // Then check for direct matches (2 tasks) for remaining unmatched tasks
-    const matchedTasks = new Set(cowMatchingGroups.flat());
+    const directMatchedTasks = new Set(cowMatchingGroups.flat());
     for (let i = 0; i < tasks.length; i++) {
-      if (matchedTasks.has(i)) continue; // Skip already matched tasks
+      if (directMatchedTasks.has(i)) continue; // Skip already matched tasks
       
       for (let j = i + 1; j < tasks.length; j++) {
-        if (matchedTasks.has(j)) continue; // Skip already matched tasks
+        if (directMatchedTasks.has(j)) continue; // Skip already matched tasks
         
         if (tasks[i].zeroForOne !== tasks[j].zeroForOne && tasks[i].poolId === tasks[j].poolId) {
           cowMatchingGroups.push([i, j]);
-          matchedTasks.add(i);
-          matchedTasks.add(j);
+          directMatchedTasks.add(i);
+          directMatchedTasks.add(j);
         }
       }
     }
@@ -174,66 +197,133 @@ const processBatch = async (batchNumber: bigint) => {
     console.log("CoW matching groups:", cowMatchingGroups);
 
     // Process all tasks through AMM if no CoW matches found
-    const result = {
-      matchings: tasks.map((task, index) => {
-        // Check if task is part of a CoW match
-        const cowGroup = cowMatchingGroups.find(group => group.includes(index));
-        const isCow = cowGroup !== undefined;
-        
-        console.log(`Task ${task.taskId} will be processed via: ${isCow ? 'CoW Matching' : 'AMM'}`);
-        if (isCow) {
-          const matchedTasks = cowGroup!.filter(i => i !== index)
-            .map(i => tasks[i].taskId)
-            .join(', ');
-          console.log(`  Matched with task(s): ${matchedTasks}`);
-          if (cowGroup!.length === 3) {
-            console.log('  This is part of a circular swap!');
-          }
-        }
-        
-        return {
-          tasks: [task],
-          feasibility: isCow ? "CIRCULAR" as const : "AMM" as const,
-          isCircular: cowGroup !== undefined && cowGroup.length === 3
-        };
-      }),
+    const result: Result = {
+      matchings: [],
       feasible: true,
-      transferBalances: tasks.map(task => ({
-        amount: Mathb.abs(task.amountSpecified),
-        currency: task.zeroForOne ? task.poolKey.currency0 : task.poolKey.currency1,
-        sender: task.sender
-      })),
-      swapBalances: tasks.map(task => ({
-        amountSpecified: task.amountSpecified,
-        zeroForOne: task.zeroForOne,
-        sqrtPriceLimitX96: task.sqrtPriceLimitX96
-      }))
+      transferBalances: [],
+      swapBalances: []
     };
+
+    // Add each CoW matching group as a single matching
+    for (const group of cowMatchingGroups) {
+      result.matchings.push({
+        tasks: group.map(i => tasks[i]),
+        feasibility: group.length === 3 ? "CIRCULAR" : "AMM",
+        isCircular: group.length === 3
+      });
+    }
+
+    // Add remaining tasks as AMM matchings
+    const matchedTasks = new Set(cowMatchingGroups.flat());
+    for (let i = 0; i < tasks.length; i++) {
+      if (!matchedTasks.has(i)) {
+        result.matchings.push({
+          tasks: [tasks[i]],
+          feasibility: "AMM",
+          isCircular: false
+        });
+      }
+    }
+
+    // Log matching info
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i];
+      const matching = result.matchings.find(m => m.tasks.some(t => t.taskId === task.taskId));
+      console.log(`Task ${task.taskId} will be processed via: ${matching?.feasibility}`);
+      if (matching && matching.tasks.length > 1) {
+        const matchedTasks = matching.tasks
+          .filter(t => t.taskId !== task.taskId)
+          .map(t => t.taskId)
+          .join(', ');
+        console.log(`  Matched with task(s): ${matchedTasks}`);
+        if (matching.isCircular) {
+          console.log('  This is part of a circular swap!');
+        }
+      }
+    }
+
+    // Compute transfer and swap balances
+    for (const matching of result.matchings) {
+      if (matching.isCircular) {
+        // For circular matches, compute transfer balances once
+        const circularTasks = matching.tasks;
+        for (let i = 0; i < circularTasks.length; i++) {
+          const task = circularTasks[i];
+          const nextTask = circularTasks[(i + 1) % circularTasks.length];
+          
+          // Add transfer balance for current task's output to next task
+          result.transferBalances.push({
+            amount: task.poolOutputAmount!,
+            currency: task.zeroForOne ? task.poolKey.currency1 : task.poolKey.currency0,
+            sender: nextTask.sender
+          });
+        }
+      } else {
+        // For AMM matches, handle normally
+        const task = matching.tasks[0];
+        result.transferBalances.push({
+          amount: Mathb.abs(task.amountSpecified),
+          currency: task.zeroForOne ? task.poolKey.currency0 : task.poolKey.currency1,
+          sender: task.sender
+        });
+        result.swapBalances.push({
+          amountSpecified: task.amountSpecified,
+          zeroForOne: task.zeroForOne,
+          sqrtPriceLimitX96: task.sqrtPriceLimitX96
+        });
+      }
+    }
 
     console.log("Transfer balances:", result.transferBalances);
     console.log("Swap balances:", result.swapBalances);
 
     // Get message hash and sign
     const messageHash = await serviceManager.read.getMessageHash([
-      tasks[0].poolId,
+      tasks[0].poolId,  // Use first task's poolId consistently
       result.transferBalances,
       result.swapBalances,
     ]);
 
-    const signature = await account.sign({
-      hash: messageHash
+    // Sign the message hash directly without prefixing, matching the MVP approach
+    const signature = await walletClient.signTypedData({
+      account,
+      domain: {},
+      types: {
+        Message: [{ name: 'hash', type: 'bytes32' }]
+      },
+      primaryType: 'Message',
+      message: {
+        hash: messageHash
+      }
     });
 
+    console.log("Message hash:", messageHash);
     console.log("Sending response with signature:", signature);
 
-    // Send response
+    // Fix: Send the response with the correct task format
     const tx = await serviceManager.write.respondToBatch([
-      tasks,
-      tasks.map(t => t.taskId),
-      result.transferBalances,
+      tasks.map(task => ({
+        taskId: Number(task.taskId), // Convert bigint to number
+        zeroForOne: task.zeroForOne,
+        amountSpecified: task.amountSpecified,
+        sqrtPriceLimitX96: task.sqrtPriceLimitX96,
+        sender: task.sender as `0x${string}`,
+        poolId: task.poolId as `0x${string}`,
+        taskCreatedBlock: task.taskCreatedBlock,
+      })),
+      tasks.map(task => Number(task.taskId)), // Convert bigint to number
+      result.transferBalances.map(tb => ({
+        amount: tb.amount,
+        currency: tb.currency as `0x${string}`,
+        sender: tb.sender as `0x${string}`,
+      })),
       result.swapBalances,
-      signature
+      signature,
     ]);
+
+    await publicClient.waitForTransactionReceipt({
+      hash: tx,
+    });
 
     console.log("Transaction sent:", tx);
 

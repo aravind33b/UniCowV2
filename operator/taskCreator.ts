@@ -85,19 +85,19 @@ const TEST_SCENARIOS = {
   // Scenario 2: Circular CoW (3 tasks that form a circle)
   circularCow: [
     {
-      zeroForOne: true,
+      zeroForOne: true,  // Task 1: token0 -> token1 in pool01
       amountSpecified: -parseEther("1"),
       sqrtPriceLimitX96: BigInt("152398000000000000000000000000"),
     },
     {
-      zeroForOne: true,
+      zeroForOne: true,  // Task 2: token1 -> token2 in pool12
       amountSpecified: -parseEther("1"),
       sqrtPriceLimitX96: BigInt("152398000000000000000000000000"),
     },
     {
-      zeroForOne: false,
+      zeroForOne: false, // Task 3: token2 -> token0 in pool02 (reverse direction)
       amountSpecified: -parseEther("1"),
-      sqrtPriceLimitX96: BigInt("152398000000000000000000000000"),
+      sqrtPriceLimitX96: BigInt("162369000000000000000000000000"),
     }
   ],
 } as const;
@@ -112,8 +112,8 @@ async function createTask(numTasks: number, scenario: keyof typeof TEST_SCENARIO
   for (let i = 0; i < numTasks && i < swapParams.length; i++) {
     console.log(`Creating task ${i + 1}`);
     
-    const poolConfigs = [POOL_CONFIGS.pool01, POOL_CONFIGS.pool12, POOL_CONFIGS.pool02];
-    const pool = poolConfigs[i];
+    // Use the correct pool for each task in the sequence
+    const pool = pools[i];
     
     const txHash = await swapRouter.write.swap([
       pool,
