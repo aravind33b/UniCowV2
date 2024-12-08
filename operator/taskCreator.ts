@@ -100,6 +100,43 @@ const TEST_SCENARIOS = {
       sqrtPriceLimitX96: BigInt("162369000000000000000000000000"),
     }
   ],
+
+  // Scenario 3: Mixed matching (3 circular + 2 direct + 1 AMM)
+  mixedMatching: [
+    // Circular match group (token0 -> token1 -> token2 -> token0)
+    {
+      zeroForOne: true,  // Task 1: token0 -> token1 in pool01
+      amountSpecified: -parseEther("1"),
+      sqrtPriceLimitX96: BigInt("152398000000000000000000000000"),
+    },
+    {
+      zeroForOne: true,  // Task 2: token1 -> token2 in pool12
+      amountSpecified: -parseEther("1"),
+      sqrtPriceLimitX96: BigInt("152398000000000000000000000000"),
+    },
+    {
+      zeroForOne: false, // Task 3: token2 -> token0 in pool02 (reverse direction)
+      amountSpecified: -parseEther("1"),
+      sqrtPriceLimitX96: BigInt("162369000000000000000000000000"),
+    },
+    // Direct CoW match group (token0 <-> token1)
+    {
+      zeroForOne: true,  // Task 4: token0 -> token1 in pool01
+      amountSpecified: -parseEther("0.5"),
+      sqrtPriceLimitX96: BigInt("152398000000000000000000000000"),
+    },
+    {
+      zeroForOne: false, // Task 5: token1 -> token0 in pool01 (reverse direction)
+      amountSpecified: -parseEther("0.5"),
+      sqrtPriceLimitX96: BigInt("162369000000000000000000000000"),
+    },
+    // AMM swap (token1 -> token2)
+    {
+      zeroForOne: true,  // Task 6: token1 -> token2 in pool12
+      amountSpecified: -parseEther("0.3"),
+      sqrtPriceLimitX96: BigInt("152398000000000000000000000000"),
+    }
+  ],
 } as const;
 
 async function createTask(numTasks: number, scenario: keyof typeof TEST_SCENARIOS = "cowMatch") {
@@ -112,8 +149,23 @@ async function createTask(numTasks: number, scenario: keyof typeof TEST_SCENARIO
   for (let i = 0; i < numTasks && i < swapParams.length; i++) {
     console.log(`Creating task ${i + 1}`);
     
-    // Use the correct pool for each task in the sequence
-    const pool = pools[i];
+    // Select the correct pool based on the task
+    let pool;
+    if (scenario === "mixedMatching") {
+      if (i < 3) {
+        // First 3 tasks use circular pools sequence
+        pool = pools[i];
+      } else if (i < 5) {
+        // Tasks 4-5 use pool01 for direct matching
+        pool = pools[0];
+      } else {
+        // Task 6 uses pool12 for AMM swap
+        pool = pools[1];
+      }
+    } else {
+      // For other scenarios, use sequential pools
+      pool = pools[i % pools.length];
+    }
     
     const txHash = await swapRouter.write.swap([
       pool,
