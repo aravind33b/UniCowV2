@@ -6,6 +6,7 @@ A decentralized actively validated service to enable Coincidence of Wants to Uni
 
 ## Table of Contents
 
+- [Demo](#demo)
 - [Key Features](#key-features)
 - [CoW](#cow)
   - [Example 1](#example-1)
@@ -15,6 +16,10 @@ A decentralized actively validated service to enable Coincidence of Wants to Uni
   - [Operator](#operator)
   - [Optimization Algorithm ⭐](#optimization-algorithm)
 - [Run it yourself](#run-it-yourself)
+
+## Demo
+
+- https://www.loom.com/share/ec0de95dc51e457fb5a389e4d56df8b5?sid=b04ed3e7-5543-4d8f-9efb-ba55ddf5e6c2
 
 ## Key Features
 
