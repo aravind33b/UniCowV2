@@ -4,6 +4,10 @@
 
 A decentralized actively validated service to enable Coincidence of Wants to Uniswap v4. Secured by EigenLayer.
 
+## Prize
+Won 2nd place in Uniswap Hook Incubator under the best use of EigenLayer AVS category
+![UHI](https://github.com/user-attachments/assets/e61dd684-1d6f-4a8f-a8d8-56d88c7f2641)
+
 ## Table of Contents
 
 - [Demo](#demo)
